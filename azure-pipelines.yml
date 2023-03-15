@@ -5,8 +5,6 @@ pool:
   name: keyvault-pavan
 
 steps:
-- script: echo Hello, world!
-  displayName: 'Run a one-line script'
 - task: AzureKeyVault@2
   inputs:
     azureSubscription: 'TS- GSK-RnD-POC(fe972184-f061-4862-90b0-27a19f647be9)'
