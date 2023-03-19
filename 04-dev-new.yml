@@ -1,0 +1,106 @@
+parameters:
+- name: image
+  displayName: Pool Image
+  values:
+  - windows-latest
+  - ubuntu-latest
+  - AKS
+- name: Language
+  displayName: Langunage
+  values:
+  - JAVA
+  - Dotnet
+  - AngularJS
+
+pool: AKS
+
+
+stages:
+  - stage: BuildJAVA
+    jobs:
+      - job: BuildCI
+        pool: 'AKS'
+
+        steps:
+
+          - task: Maven@4
+            inputs:
+              mavenPomFile: 'pom.xml'
+              goals: 'clean install'
+              publishJUnitResults: true
+              testResultsFiles: '**/surefire-reports/TEST-*.xml'
+              javaHomeOption: 'JDKVersion'
+              mavenVersionOption: 'Default'
+              mavenAuthenticateFeed: false
+              effectivePomSkip: false
+              sonarQubeRunAnalysis: false
+
+#Copy the files
+          - task: CopyFiles@2
+            displayName: 'Copy Files to: $(Build.ArtifactStagingDirectory)'
+            inputs:
+              SourceFolder: '$(agent.builddirectory)'
+              Contents: '**'
+              TargetFolder: '$(Build.ArtifactStagingDirectory)'
+
+#Publish the build artifacts
+          - task: PublishBuildArtifacts@1
+            inputs:
+              PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+              ArtifactName: 'drop'
+              publishLocation: 'Container'
+
+  - stage: Dev
+    displayName: 'Dev'
+#Download secrets from Azure keyvault
+    variables: 
+         - group: 'AzureKeyvault'
+    jobs:
+      - deployment: 
+        pool: 'AKS'
+        environment: 'Dev'
+        strategy:
+         runOnce:
+           deploy:
+             steps:
+
+#Replace secrets in to text file
+              - task: AzurePowerShell@5
+                inputs:
+                  azureSubscription: 'service-connection'
+                  ScriptType: 'InlineScript'
+                  Inline: |
+                    $sourceVaultName = $args[0]
+                    $destVaultName = $args[1]
+                    $names = (Get-AzureKeyVaultSecret -VaultName $sourceVaultName | select Name)
+                    $i=0
+                    do {
+                      $rawSecret = (Get-AzureKeyVaultSecret -VaultName $sourceVaultName -Name $names[$i].Name).SecretValueText
+                      $AKVsecret = ConvertTo-SecureString $rawSecret -AsPlainText -Force
+                      Set-AzureKeyVaultSecret -VaultName $destVaultName -Name $names[$i].Name -SecretValue $AKVsecret
+                      $i++
+                    } while($i -lt $names.length)
+
+#deploy in to AKS
+              - task: Kubernetes@1
+                inputs:
+                    connectionType: 'Kubernetes Service Connection'
+                    kubernetesServiceEndpoint: 'aks-connection'
+                    namespace: 'default'
+                    useConfigurationFile: true
+                    configuration: '$(Pipeline.Workspace)/drop/deployment.yaml'
+                    secretType: 'dockerRegistry'
+                    containerRegistryType: 'Azure Container Registry'
+
+              - task: SendEmail@1
+                inputs:
+                  To: 'kallupavan40@gamil.com'
+                  CC: 'kallupavan40@gamil.com'
+                  From: 'kallupavan40@gamil.com'
+                  Subject: 'AKS Deployment'
+                  Body: |
+                    Hi Team,
+                    AKS deployment
+                  BodyAsHtml: false
+                  AddAttachment: false
+                  SmtpPort:
